@@ -5,9 +5,15 @@
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { ConfigError, loadConfig, parseServiceAccount } from "./config.js";
+import { ConfigError, loadConfig, parseServiceAccount, resolveGoogleAuth } from "./config.js";
 
 const emptyEnv: NodeJS.ProcessEnv = {};
+
+// GitHub Secrets 経由だと改行が「\ + n」の2文字で届く。その状態を再現する
+const SERVICE_ACCOUNT_JSON = JSON.stringify({
+  client_email: "svc@example.iam.gserviceaccount.com",
+  private_key: String.raw`-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n`,
+});
 
 describe("loadConfig - デモモード", () => {
   it("環境変数が何も無くても動く", () => {
@@ -40,7 +46,28 @@ describe("loadConfig - 本番モード", () => {
     assert.equal(config.google, undefined);
   });
 
-  it("Google連携の設定が中途半端なら起動時に落とす", () => {
+  it("サービスアカウント方式が揃っていれば読み込む", () => {
+    const config = loadConfig({
+      mode: "live",
+      dryRun: false,
+      env: {
+        ANTHROPIC_API_KEY: "sk-ant-test",
+        GOOGLE_SERVICE_ACCOUNT_JSON: SERVICE_ACCOUNT_JSON,
+        GMAIL_USER: "you@example.com",
+        SHEETS_SPREADSHEET_ID: "sheet-id",
+      },
+    });
+
+    assert.equal(config.google?.sheetsRange, "triage!A:H", "未設定なら既定値を使う");
+    assert.ok(config.google?.auth.mode === "service_account");
+    assert.equal(config.google.auth.subject, "you@example.com");
+    assert.ok(
+      config.google.auth.credentials.private_key.includes("\n"),
+      "GitHub Secrets 経由で 2文字として届いた改行を復元すること",
+    );
+  });
+
+  it("記録先が指定されていなければ落とす", () => {
     assert.throws(
       () =>
         loadConfig({
@@ -48,32 +75,80 @@ describe("loadConfig - 本番モード", () => {
           dryRun: false,
           env: {
             ANTHROPIC_API_KEY: "sk-ant-test",
+            GOOGLE_SERVICE_ACCOUNT_JSON: SERVICE_ACCOUNT_JSON,
             GMAIL_USER: "you@example.com",
-            // GOOGLE_SERVICE_ACCOUNT_JSON と SHEETS_SPREADSHEET_ID が無い
+            // SHEETS_SPREADSHEET_ID が無い
           },
         }),
-      (error: unknown) => error instanceof ConfigError && /Google連携/.test(error.message),
+      (error: unknown) =>
+        error instanceof ConfigError && /SHEETS_SPREADSHEET_ID/.test(error.message),
+    );
+  });
+});
+
+describe("resolveGoogleAuth - 認証方式の選択", () => {
+  it("何も設定が無ければ null（Google連携なしで動く）", () => {
+    assert.equal(resolveGoogleAuth({}), null);
+  });
+
+  it("OAuth の3つが揃っていれば oauth を選ぶ", () => {
+    const auth = resolveGoogleAuth({
+      GOOGLE_OAUTH_CLIENT_ID: "id",
+      GOOGLE_OAUTH_CLIENT_SECRET: "secret",
+      GOOGLE_OAUTH_REFRESH_TOKEN: "refresh",
+    });
+
+    assert.ok(auth?.mode === "oauth");
+    assert.equal(auth.refreshToken, "refresh");
+  });
+
+  it("OAuth の設定が欠けていたら落とす", () => {
+    assert.throws(
+      () =>
+        resolveGoogleAuth({
+          GOOGLE_OAUTH_CLIENT_ID: "id",
+          GOOGLE_OAUTH_CLIENT_SECRET: "secret",
+          // リフレッシュトークンが無い
+        }),
+      (error: unknown) =>
+        error instanceof ConfigError && /GOOGLE_OAUTH_REFRESH_TOKEN/.test(error.message),
     );
   });
 
-  it("Google連携が揃っていれば読み込む", () => {
-    const config = loadConfig({
-      mode: "live",
-      dryRun: false,
-      env: {
-        ANTHROPIC_API_KEY: "sk-ant-test",
-        GOOGLE_SERVICE_ACCOUNT_JSON: JSON.stringify({
-          client_email: "svc@example.iam.gserviceaccount.com",
-          private_key: "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n",
+  it("サービスアカウント方式で GMAIL_USER が無ければ落とす", () => {
+    // 個人の @gmail.com は委任を設定できないためここに来る。
+    // 黙って通すとサービスアカウント自身の空のメールボックスを見にいく
+    assert.throws(
+      () => resolveGoogleAuth({ GOOGLE_SERVICE_ACCOUNT_JSON: SERVICE_ACCOUNT_JSON }),
+      (error: unknown) => error instanceof ConfigError && /OAuth方式/.test(error.message),
+    );
+  });
+
+  it("両方の設定があれば、どちらを使うかを明示させる", () => {
+    assert.throws(
+      () =>
+        resolveGoogleAuth({
+          GOOGLE_SERVICE_ACCOUNT_JSON: SERVICE_ACCOUNT_JSON,
+          GMAIL_USER: "you@example.com",
+          GOOGLE_OAUTH_CLIENT_ID: "id",
+          GOOGLE_OAUTH_CLIENT_SECRET: "secret",
+          GOOGLE_OAUTH_REFRESH_TOKEN: "refresh",
         }),
-        GMAIL_USER: "you@example.com",
-        SHEETS_SPREADSHEET_ID: "sheet-id",
-      },
+      (error: unknown) => error instanceof ConfigError && /GOOGLE_AUTH_MODE/.test(error.message),
+    );
+  });
+
+  it("GOOGLE_AUTH_MODE で明示すればその方式を使う", () => {
+    const auth = resolveGoogleAuth({
+      GOOGLE_AUTH_MODE: "oauth",
+      GOOGLE_SERVICE_ACCOUNT_JSON: SERVICE_ACCOUNT_JSON,
+      GMAIL_USER: "you@example.com",
+      GOOGLE_OAUTH_CLIENT_ID: "id",
+      GOOGLE_OAUTH_CLIENT_SECRET: "secret",
+      GOOGLE_OAUTH_REFRESH_TOKEN: "refresh",
     });
 
-    assert.equal(config.google?.gmailUser, "you@example.com");
-    assert.equal(config.google?.sheetsRange, "triage!A:H", "未設定なら既定値を使う");
-    assert.match(config.google?.credentials.private_key ?? "", /\n/, "改行を復元すること");
+    assert.equal(auth?.mode, "oauth");
   });
 });
 

@@ -62,7 +62,7 @@
 | # | 必要なもの | 入手方法 | 誰が用意するか |
 |---|---|---|---|
 | 1 | Anthropic の APIキー | https://console.anthropic.com/ で発行 | 担当者（クレジットカード登録が必要） |
-| 2 | Google Workspace の管理者権限 | 社内の情報システム担当に依頼 | 情報システム担当 |
+| 2 | Google Workspace の管理者権限（**個人のGmailを使う場合は不要**） | 社内の情報システム担当に依頼 | 情報システム担当 |
 | 3 | 対象の Gmail アドレス | 例: `info@あなたの会社.co.jp` | 担当者 |
 | 4 | 記録用のスプレッドシート | Googleドライブで新規作成 | 担当者 |
 | 5 | Slack の通知先チャンネル | 既存のチャンネルでよい | 担当者 |
@@ -87,9 +87,24 @@
 
 ---
 
-### 3-2. Google の設定（情報システム担当と一緒に行う）
+### 3-2. Google の設定 — まず、どちらの方式かを選ぶ
 
-Gmailを自動で読むための権限設定です。**Google Workspace の管理者権限が必要**です。
+**対象のメールアドレスによって手順が変わります。** 先にどちらか確認してください。
+
+| 対象のメールアドレス | 使う方式 | 進む手順 |
+|---|---|---|
+| 会社の Google Workspace（`@自社ドメイン`） | サービスアカウント | **3-2A** |
+| 個人の Gmail（`@gmail.com`） | OAuth | **3-2B** |
+
+> **個人の Gmail では 3-2A は使えません。**
+> サービスアカウント方式は「ドメイン全体の委任」という設定が前提で、これは Google Workspace の管理コンソールにしかありません。
+> `@gmail.com` には委任元となるドメインが存在しないため、設定する画面自体がありません。個人のGmailを使うなら 3-2B に進んでください。
+
+---
+
+### 3-2A. Google Workspace の場合（情報システム担当と一緒に行う）
+
+**Google Workspace の管理者権限が必要**です。個人のGmailを使う場合はここを飛ばして 3-2B へ進んでください。
 
 #### (1) サービスアカウントを作る
 
@@ -117,7 +132,7 @@ Gmailを自動で読むための権限設定です。**Google Workspace の管�
 6. OAuthスコープに、以下を**カンマ区切りで**貼り付けます
 
 ```
-https://www.googleapis.com/auth/gmail.readonly,https://www.googleapis.com/auth/gmail.compose
+https://www.googleapis.com/auth/gmail.readonly,https://www.googleapis.com/auth/gmail.compose,https://www.googleapis.com/auth/spreadsheets
 ```
 
 7. 「承認」を押します
@@ -126,7 +141,93 @@ https://www.googleapis.com/auth/gmail.readonly,https://www.googleapis.com/auth/g
 > 万が一プログラムに不具合があっても、メールが顧客に送信されることは**技術的に起こりえません**。
 > この2つ以外のスコープを足さないでください。
 
-#### (3) スプレッドシートを用意する
+3-2A を実施した場合は、**3-2C. スプレッドシートを用意する**（3-2B の後にあります）へ進んでください。
+
+---
+
+### 3-2B. 個人の Gmail の場合（OAuth）
+
+管理者権限は不要です。**本人のアカウントで1回だけ許可の操作を行い**、以降は自動で動きます。
+
+#### (1) プロジェクトとAPIを用意する
+
+1. https://console.cloud.google.com/ を開きます
+2. 画面上部でプロジェクトを新規作成します（名前は `mail-triage` など）
+3. 左メニュー「APIとサービス」→「ライブラリ」で `Gmail API` を検索し「有効にする」を押します
+4. 同様に `Google Sheets API` も「有効にする」を押します
+
+#### (2) OAuth同意画面を作り、「本番」に公開する
+
+1. 左メニュー「APIとサービス」→「OAuth同意画面」を開きます
+2. User Type は「外部」を選びます（個人のGmailでは「内部」は選べません）
+3. アプリ名（`mail-triage` など）、サポートメール、デベロッパー連絡先に自分のアドレスを入力します
+4. スコープの追加で、次の3つを選びます
+
+```
+https://www.googleapis.com/auth/gmail.readonly
+https://www.googleapis.com/auth/gmail.compose
+https://www.googleapis.com/auth/spreadsheets
+```
+
+5. テストユーザーに自分のGmailアドレスを追加します
+6. **同意画面の「公開ステータス」を「本番環境」に切り替えます**（「アプリを公開」ボタン）
+
+> ### ここが最大の罠です（必ず読んでください）
+>
+> **罠1: 「テスト」状態のままだと、7日ごとに止まります。**
+> 公開ステータスが「テスト」のまま発行したリフレッシュトークン（次の手順で取得するもの）は、**7日で失効します**。
+> 動作確認した1週間後、何も変えていないのに定期実行が毎回失敗するようになります。原因が分かりにくい種類の故障です。
+> 手順6で「本番環境」に切り替えてから、次の(4)でトークンを取得してください。
+>
+> **罠2: `gmail.readonly` と `gmail.compose` は「制限付きスコープ」です。**
+> Googleが特に慎重に扱う種類の権限で、審査を受けていないアプリのままだと、許可の途中で
+> 「このアプリはGoogleで確認されていません」という警告画面が出ます（「詳細」→「（アプリ名）に移動」で進めます）。
+> **自分1人で使う分にはこのまま運用できます。** ただし他の人にも使わせる場合は、
+> 利用者数の上限や、Googleのアプリ審査が必要になります。他人に配る予定があるなら、その前に担当エンジニアに相談してください。
+
+#### (3) 認証情報（クライアントID）を作る
+
+1. 左メニュー「APIとサービス」→「認証情報」を開きます
+2. 「認証情報を作成」→「OAuth クライアント ID」を選びます
+3. アプリケーションの種類は **「デスクトップアプリ」** を選びます
+4. 作成すると **クライアントID** と **クライアントシークレット** が表示されます。両方コピーして保存します
+
+#### (4) リフレッシュトークンを取得する（1回だけ）
+
+この作業だけはPCのターミナルで行います。担当エンジニアに依頼しても構いません。
+
+```bash
+npm install
+```
+
+プロジェクト直下に `.env` というファイルを作り、(3)の値を書きます。
+
+```
+GOOGLE_OAUTH_CLIENT_ID=（クライアントID）
+GOOGLE_OAUTH_CLIENT_SECRET=（クライアントシークレット）
+```
+
+そのうえで次を実行します。
+
+```bash
+npm run auth:google
+```
+
+画面にURLが表示されるので、ブラウザで開き、**対象のGmailアカウント**で許可します。
+（罠2の警告画面が出たら「詳細」→「（アプリ名）に移動」で進みます）
+
+許可すると、ターミナルに次の形式で結果が出ます。
+
+```
+GOOGLE_OAUTH_REFRESH_TOKEN=1//0e...
+```
+
+**この値もパスワードと同じ扱い**です。手順3-4でGitHubに登録します。
+
+> リフレッシュトークンが表示されず「同じアカウントで過去に許可済みの場合に起きます」と出た場合は、
+> https://myaccount.google.com/permissions でこのアプリのアクセスを解除してから、もう一度実行してください。
+
+### 3-2C. スプレッドシートを用意する（3-2A / 3-2B 共通）
 
 1. Googleドライブで新しいスプレッドシートを作ります（名前は「メール振り分け記録」など）
 2. 左下のシート名（`シート1`）をダブルクリックし、**`triage`** に変更します
@@ -136,9 +237,9 @@ https://www.googleapis.com/auth/gmail.readonly,https://www.googleapis.com/auth/g
 |---|---|---|---|---|---|---|---|
 | 処理日時 | 受信日時 | メッセージID | 差出人 | 件名 | 分類 | 確信度 | 要約 |
 
-4. 右上の「共有」を押します
-5. 手順(1)のJSONファイルに書かれている `client_email` の値（`〜@〜.iam.gserviceaccount.com` という形式のアドレス）を入力し、**編集者**として共有します
-6. ブラウザのアドレスバーのURLから、**スプレッドシートID**を控えます
+4. **3-2A（サービスアカウント）の場合のみ**、右上の「共有」を押し、3-2A(1)のJSONファイルに書かれている `client_email` の値（`〜@〜.iam.gserviceaccount.com` という形式のアドレス）を **編集者**として追加します
+   （3-2B（OAuth）の場合は自分のアカウントで書き込むため、共有の設定は要りません）
+5. ブラウザのアドレスバーのURLから、**スプレッドシートID**を控えます
 
 ```
 https://docs.google.com/spreadsheets/d/【ここがスプレッドシートID】/edit
@@ -166,15 +267,30 @@ https://docs.google.com/spreadsheets/d/【ここがスプレッドシートID】
 
 #### Secrets（秘密の情報）
 
-「New repository secret」を押し、次の3つを登録します。**一度登録すると中身は二度と表示されません**（上書きはできます）。
+「New repository secret」を押して登録します。**一度登録すると中身は二度と表示されません**（上書きはできます）。
+
+共通のもの。
 
 | 名前 | 入れる値 |
 |---|---|
 | `ANTHROPIC_API_KEY` | 手順3-1で取得した `sk-ant-` で始まる文字列 |
-| `GOOGLE_SERVICE_ACCOUNT_JSON` | 手順3-2(1)でダウンロードしたJSONファイルの中身を**すべてコピーして貼り付け** |
 | `SLACK_WEBHOOK_URL` | 手順3-3でコピーした `https://hooks.slack.com/services/...` |
 
-> `GOOGLE_SERVICE_ACCOUNT_JSON` は、JSONファイルをメモ帳などで開いて、`{` から `}` まで全部をそのまま貼り付けてください。改行が入っていても構いません。
+**3-2A（Google Workspace / サービスアカウント）を選んだ場合**は、これも登録します。
+
+| 名前 | 入れる値 |
+|---|---|
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | 手順3-2A(1)でダウンロードしたJSONファイルの中身を**すべてコピーして貼り付け** |
+
+> JSONファイルをメモ帳などで開いて、`{` から `}` まで全部をそのまま貼り付けてください。改行が入っていても構いません。
+
+**3-2B（個人のGmail / OAuth）を選んだ場合**は、これらを登録します。
+
+| 名前 | 入れる値 |
+|---|---|
+| `GOOGLE_OAUTH_CLIENT_ID` | 手順3-2B(3)のクライアントID |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | 手順3-2B(3)のクライアントシークレット |
+| `GOOGLE_OAUTH_REFRESH_TOKEN` | 手順3-2B(4)で取得した `1//` で始まる文字列 |
 
 #### Variables（秘密でない設定）
 
@@ -182,7 +298,7 @@ https://docs.google.com/spreadsheets/d/【ここがスプレッドシートID】
 
 | 名前 | 入れる値 | 例 |
 |---|---|---|
-| `GMAIL_USER` | 対象のメールアドレス | `info@example.co.jp` |
+| `GMAIL_USER` | 対象のメールアドレス（**3-2A のみ必要**。3-2B では不要） | `info@example.co.jp` |
 | `GMAIL_QUERY` | 取得するメールの条件 | `is:unread -category:promotions` |
 | `SHEETS_SPREADSHEET_ID` | 手順3-2(3)で控えたID | `1AbC...XyZ` |
 | `SHEETS_RANGE` | 記録先の範囲 | `triage!A:H` |
@@ -342,6 +458,15 @@ GitHubの「Actions」タブを開き、左メニューから **CI** を選ん�
 | `403` / `insufficient permission` | Googleの権限設定 | 手順3-2(2)のスコープ設定をやり直す |
 | `Slack通知に失敗しました (HTTP 404)` | Webhook URLが無効 | 手順3-3をやり直す |
 | `429` / `rate limit` | APIの利用制限 | 自動で3回まで再試行される。それでも失敗する場合は `TRIAGE_MAX_MESSAGES` を減らす |
+| `invalid_grant` / `Token has been expired or revoked` | **OAuthのリフレッシュトークンが失効した** | 下の「1週間ほど動いていたのに、急に毎回失敗するようになった」を参照 |
+
+### 1週間ほど動いていたのに、急に毎回失敗するようになった（OAuthの場合）
+
+**OAuth同意画面が「テスト」状態のまま取得したリフレッシュトークンは7日で失効します。** 症状がこの形（設定を何も変えていないのに、ある日から全部失敗する）なら、まずこれを疑ってください。
+
+1. https://console.cloud.google.com/ →「APIとサービス」→「OAuth同意画面」を開く
+2. 公開ステータスが「テスト」なら「アプリを公開」で**本番環境に切り替える**
+3. `npm run auth:google` を実行し直し、新しい `GOOGLE_OAUTH_REFRESH_TOKEN` をSecretに登録し直す
 
 **失敗した実行で処理できなかったメールは、次回の実行で自動的に処理されます。** 慌てて手動で実行し直す必要はありません。
 
@@ -370,9 +495,13 @@ GitHubの「Actions」タブを開き、左メニューから **CI** を選ん�
 | 名前 | 種別 | 必須 | 既定値 | 説明 |
 |---|---|:---:|---|---|
 | `ANTHROPIC_API_KEY` | Secret | ○ | – | Claude API のキー |
-| `GOOGLE_SERVICE_ACCOUNT_JSON` | Secret | ○ | – | サービスアカウントのJSONキー |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | Secret | 3-2Aなら○ | – | サービスアカウントのJSONキー |
+| `GOOGLE_OAUTH_CLIENT_ID` | Secret | 3-2Bなら○ | – | OAuthクライアントID |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | Secret | 3-2Bなら○ | – | OAuthクライアントシークレット |
+| `GOOGLE_OAUTH_REFRESH_TOKEN` | Secret | 3-2Bなら○ | – | `npm run auth:google` で取得。**「テスト」状態で取ると7日で失効する** |
+| `GOOGLE_AUTH_MODE` | Variable | – | 自動判定 | `service_account` / `oauth`。両方の設定がある場合のみ必要 |
 | `SLACK_WEBHOOK_URL` | Secret | – | – | 未設定ならログ出力のみ |
-| `GMAIL_USER` | Variable | ○ | – | 対象のメールアドレス |
+| `GMAIL_USER` | Variable | 3-2Aなら○ | – | 委任先のメールアドレス。3-2B では不要 |
 | `GMAIL_QUERY` | Variable | – | `is:unread -category:promotions` | 取得条件。Gmailの検索窓と同じ書き方 |
 | `SHEETS_SPREADSHEET_ID` | Variable | ○ | – | 記録先スプレッドシートのID |
 | `SHEETS_RANGE` | Variable | – | `triage!A:H` | 記録先のシート名と範囲 |

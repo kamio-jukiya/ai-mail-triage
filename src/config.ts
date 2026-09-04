@@ -10,6 +10,7 @@
 
 import { readFileSync } from "node:fs";
 import { z } from "zod";
+import type { GoogleAuthConfig } from "./adapters/google-auth.js";
 
 export type RunMode = "demo" | "live";
 
@@ -21,8 +22,8 @@ export interface Config {
   model: string;
   anthropicApiKey?: string;
   google?: {
-    credentials: { client_email: string; private_key: string };
-    gmailUser: string;
+    /** 認証方式。個人の @gmail.com では oauth しか使えない */
+    auth: GoogleAuthConfig;
     gmailQuery: string;
     spreadsheetId: string;
     sheetsRange: string;
@@ -30,6 +31,12 @@ export interface Config {
   slackWebhookUrl?: string;
   /** 処理済みIDの保存先 */
   statePath: string;
+  /**
+   * ログと画面表示にメールの内容（件名・差出人・要約）を含めるか。
+   * 公開リポジトリの GitHub Actions 実行ログは誰でも読めるため、既定は false。
+   * デモは fixtures の作り話なので既定で true にしている。
+   */
+  logContent: boolean;
 }
 
 /** 数値の環境変数。未設定なら既定値、不正な値なら起動時に落とす。 */
@@ -46,12 +53,17 @@ const EnvSchema = z.object({
   TRIAGE_MAX_MESSAGES: numberFromEnv(20, 1, 500),
   TRIAGE_CONFIDENCE_THRESHOLD: numberFromEnv(0.6, 0, 1),
   TRIAGE_STATE_PATH: z.string().optional(),
+  GOOGLE_AUTH_MODE: z.enum(["service_account", "oauth"]).optional(),
   GOOGLE_SERVICE_ACCOUNT_JSON: z.string().optional(),
+  GOOGLE_OAUTH_CLIENT_ID: z.string().optional(),
+  GOOGLE_OAUTH_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_OAUTH_REFRESH_TOKEN: z.string().optional(),
   GMAIL_USER: z.string().optional(),
   GMAIL_QUERY: z.string().optional(),
   SHEETS_SPREADSHEET_ID: z.string().optional(),
   SHEETS_RANGE: z.string().optional(),
   SLACK_WEBHOOK_URL: z.string().optional(),
+  TRIAGE_LOG_CONTENT: z.enum(["true", "false"]).optional(),
 });
 
 export interface LoadConfigInput {
@@ -88,6 +100,9 @@ export function loadConfig(input: LoadConfigInput): Config {
     confidenceThreshold: e.TRIAGE_CONFIDENCE_THRESHOLD,
     model: e.TRIAGE_MODEL ?? "claude-opus-5",
     statePath: e.TRIAGE_STATE_PATH ?? "state/processed.json",
+    logContent: e.TRIAGE_LOG_CONTENT
+      ? e.TRIAGE_LOG_CONTENT === "true"
+      : input.mode === "demo",
   };
 
   // デモは外部サービスを一切使わないので、ここで検証は終わり
@@ -101,26 +116,19 @@ export function loadConfig(input: LoadConfigInput): Config {
   }
   config.anthropicApiKey = e.ANTHROPIC_API_KEY;
 
-  // Google 連携は「全部設定するか、全部設定しないか」のどちらか。
+  // Google 連携。設定されていなければコンソール出力にフォールバックする。
   // 中途半端な設定は事故のもとなので、揃っていなければ起動時に落とす
-  const googleKeys = [
-    e.GOOGLE_SERVICE_ACCOUNT_JSON,
-    e.GMAIL_USER,
-    e.SHEETS_SPREADSHEET_ID,
-  ];
-  const configuredCount = googleKeys.filter((v) => v && v !== "").length;
+  const auth = resolveGoogleAuth(e);
 
-  if (configuredCount > 0 && configuredCount < googleKeys.length) {
-    throw new ConfigError(
-      "Google連携の設定が不足しています。GOOGLE_SERVICE_ACCOUNT_JSON / GMAIL_USER / SHEETS_SPREADSHEET_ID は" +
-        "すべて設定するか、すべて空にしてください。",
-    );
-  }
+  if (auth) {
+    if (!has(e.SHEETS_SPREADSHEET_ID)) {
+      throw new ConfigError(
+        "Google連携の設定が不足しています。SHEETS_SPREADSHEET_ID を設定してください。",
+      );
+    }
 
-  if (configuredCount === googleKeys.length) {
     config.google = {
-      credentials: parseServiceAccount(e.GOOGLE_SERVICE_ACCOUNT_JSON as string),
-      gmailUser: e.GMAIL_USER as string,
+      auth,
       gmailQuery: e.GMAIL_QUERY ?? "is:unread -category:promotions",
       spreadsheetId: e.SHEETS_SPREADSHEET_ID as string,
       sheetsRange: e.SHEETS_RANGE ?? "triage!A:H",
@@ -130,6 +138,88 @@ export function loadConfig(input: LoadConfigInput): Config {
   if (e.SLACK_WEBHOOK_URL) config.slackWebhookUrl = e.SLACK_WEBHOOK_URL;
 
   return config;
+}
+
+const has = (value: string | undefined): boolean => value !== undefined && value !== "";
+
+/**
+ * どちらの認証方式を使うかを決める。
+ *
+ *   - OAuth の変数が設定されていれば OAuth
+ *   - サービスアカウントJSONが設定されていればサービスアカウント
+ *   - 両方あれば GOOGLE_AUTH_MODE で明示させる（黙ってどちらかを選ぶと事故る）
+ *   - どちらも無ければ null（Google連携なしで動く）
+ */
+export function resolveGoogleAuth(env: {
+  GOOGLE_AUTH_MODE?: "service_account" | "oauth" | undefined;
+  GOOGLE_SERVICE_ACCOUNT_JSON?: string | undefined;
+  GOOGLE_OAUTH_CLIENT_ID?: string | undefined;
+  GOOGLE_OAUTH_CLIENT_SECRET?: string | undefined;
+  GOOGLE_OAUTH_REFRESH_TOKEN?: string | undefined;
+  GMAIL_USER?: string | undefined;
+}): GoogleAuthConfig | null {
+  const oauthValues = [
+    env.GOOGLE_OAUTH_CLIENT_ID,
+    env.GOOGLE_OAUTH_CLIENT_SECRET,
+    env.GOOGLE_OAUTH_REFRESH_TOKEN,
+  ];
+  const oauthCount = oauthValues.filter(has).length;
+  const hasServiceAccount = has(env.GOOGLE_SERVICE_ACCOUNT_JSON);
+
+  const mode =
+    env.GOOGLE_AUTH_MODE ??
+    (oauthCount > 0 && hasServiceAccount
+      ? null
+      : oauthCount > 0
+        ? "oauth"
+        : hasServiceAccount
+          ? "service_account"
+          : undefined);
+
+  if (mode === null) {
+    throw new ConfigError(
+      "OAuth とサービスアカウントの設定が両方あります。GOOGLE_AUTH_MODE に oauth か service_account を指定してください。",
+    );
+  }
+
+  if (mode === undefined) return null;
+
+  if (mode === "oauth") {
+    if (oauthCount < oauthValues.length) {
+      throw new ConfigError(
+        "OAuth の設定が不足しています。GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET / " +
+          "GOOGLE_OAUTH_REFRESH_TOKEN をすべて設定してください。" +
+          "（リフレッシュトークンは npm run auth:google で取得できます）",
+      );
+    }
+
+    return {
+      mode: "oauth",
+      clientId: env.GOOGLE_OAUTH_CLIENT_ID as string,
+      clientSecret: env.GOOGLE_OAUTH_CLIENT_SECRET as string,
+      refreshToken: env.GOOGLE_OAUTH_REFRESH_TOKEN as string,
+    };
+  }
+
+  if (!hasServiceAccount) {
+    throw new ConfigError(
+      "GOOGLE_AUTH_MODE=service_account ですが GOOGLE_SERVICE_ACCOUNT_JSON がありません。",
+    );
+  }
+
+  if (!has(env.GMAIL_USER)) {
+    // 委任先を指定しないとサービスアカウント自身の空のメールボックスを見にいく
+    throw new ConfigError(
+      "サービスアカウント方式には GMAIL_USER（委任先のメールアドレス）が必要です。" +
+        "個人の @gmail.com はドメイン全体の委任を設定できないため、OAuth方式を使ってください。",
+    );
+  }
+
+  return {
+    mode: "service_account",
+    credentials: parseServiceAccount(env.GOOGLE_SERVICE_ACCOUNT_JSON as string),
+    subject: env.GMAIL_USER as string,
+  };
 }
 
 /** サービスアカウントJSONを読む。改行がエスケープされている場合に対応する。 */
@@ -158,7 +248,7 @@ export function parseServiceAccount(raw: string): { client_email: string; privat
   return {
     client_email: parsed.data.client_email,
     // GitHub Secrets 経由だと改行が \n の2文字になって届くことがある
-    private_key: parsed.data.private_key.replace(/\n/g, "\n"),
+    private_key: parsed.data.private_key.replace(/\\n/g, "\n"),
   };
 }
 

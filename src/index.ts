@@ -25,6 +25,7 @@ import {
   FixtureMailSource,
 } from "./adapters/memory.js";
 import { GmailDraftWriter, GmailMailSource } from "./adapters/gmail.js";
+import { createGoogleAuth } from "./adapters/google-auth.js";
 import { SheetsRecordSink } from "./adapters/sheets.js";
 import { SlackNotifier } from "./adapters/slack.js";
 
@@ -132,28 +133,28 @@ function buildLiveDeps(config: Config, logger: Logger): PipelineDeps {
 
   const google = config.google;
 
-  const gmailOptions = google
-    ? { credentials: google.credentials, userEmail: google.gmailUser, logger }
-    : undefined;
+  if (!google) {
+    throwMissing(
+      "Google連携（OAuth の3つの値、またはサービスアカウントJSONと GMAIL_USER）と SHEETS_SPREADSHEET_ID",
+    );
+  }
+
+  // 認証方式の違いはここで吸収する。以降のアダプタは方式を意識しない
+  const auth = createGoogleAuth(google.auth);
+  logger.info("google.auth", { mode: google.auth.mode });
 
   return {
-    source:
-      google && gmailOptions
-        ? new GmailMailSource(gmailOptions, google.gmailQuery)
-        : throwMissing("GMAIL_USER / GOOGLE_SERVICE_ACCOUNT_JSON"),
+    source: new GmailMailSource(auth, google.gmailQuery, logger),
     classifier,
-    sink: google
-      ? new SheetsRecordSink({
-          credentials: google.credentials,
-          spreadsheetId: google.spreadsheetId,
-          range: google.sheetsRange,
-          logger,
-        })
-      : new ConsoleRecordSink(logger),
+    sink: new SheetsRecordSink(auth, {
+      spreadsheetId: google.spreadsheetId,
+      range: google.sheetsRange,
+      logger,
+    }),
     notifier: config.slackWebhookUrl
       ? new SlackNotifier(config.slackWebhookUrl, logger)
       : new ConsoleNotifier(logger),
-    ...(gmailOptions ? { draftWriter: new GmailDraftWriter(gmailOptions) } : {}),
+    draftWriter: new GmailDraftWriter(auth, logger),
     store: new FileProcessedStore(config.statePath),
     logger,
   };

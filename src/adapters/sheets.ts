@@ -7,11 +7,11 @@
  */
 
 import { google, type sheets_v4 } from "googleapis";
+import type { GoogleAuthClient } from "./google-auth.js";
 import { CATEGORY_LABELS, type RecordSink, type TriageResult } from "../core/types.js";
 import type { Logger } from "../logger.js";
 
 export interface SheetsOptions {
-  credentials: { client_email: string; private_key: string };
   spreadsheetId: string;
   /** 追記先の範囲。例: triage!A:H */
   range: string;
@@ -35,12 +35,10 @@ export class SheetsRecordSink implements RecordSink {
 
   private readonly sheets: sheets_v4.Sheets;
 
-  constructor(private readonly options: SheetsOptions) {
-    const auth = new google.auth.JWT({
-      email: options.credentials.client_email,
-      key: options.credentials.private_key,
-      scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-    });
+  constructor(
+    auth: GoogleAuthClient,
+    private readonly options: SheetsOptions,
+  ) {
     this.sheets = google.sheets({ version: "v4", auth });
   }
 
@@ -52,10 +50,8 @@ export class SheetsRecordSink implements RecordSink {
       requestBody: { values: [toRow(result)] },
     });
 
-    this.options.logger.info("sheets.appended", {
-      messageId: result.message.id,
-      spreadsheetId: this.options.spreadsheetId,
-    });
+    // シートIDと件名はログに出さない。記録の事実だけ残す
+    this.options.logger.info("sheets.appended", { messageId: result.message.id });
   }
 }
 

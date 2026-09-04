@@ -1,59 +1,34 @@
 /**
  * Gmail の読み取りと下書き作成。
  *
- * 認証はサービスアカウント + ドメイン全体の委任（Domain-Wide Delegation）。
- * ブラウザでのOAuth同意が要らないので、GitHub Actions のような
- * 無人環境で動かせる。設定手順は docs/operations.md に書いてある。
+ * 認証方式（サービスアカウント / OAuth）は google-auth.ts が吸収するので、
+ * ここでは認証済みのクライアントを受け取るだけにしてある。
+ * 個人の @gmail.com は OAuth 方式でしか動かない（理由は google-auth.ts のコメント）。
  */
 
 import { google, type gmail_v1 } from "googleapis";
+import { GMAIL_USER_ID, type GoogleAuthClient } from "./google-auth.js";
 import type { DraftWriter, EmailMessage, MailSource, TriageResult } from "../core/types.js";
 import type { Logger } from "../logger.js";
-
-export interface GmailOptions {
-  /** サービスアカウントのJSONキー（パース済み） */
-  credentials: { client_email: string; private_key: string };
-  /** 代理でアクセスする対象のメールアドレス */
-  userEmail: string;
-  logger: Logger;
-}
-
-const SCOPES = [
-  "https://www.googleapis.com/auth/gmail.readonly",
-  "https://www.googleapis.com/auth/gmail.compose",
-];
-
-function createGmailClient(options: GmailOptions): gmail_v1.Gmail {
-  const auth = new google.auth.JWT({
-    email: options.credentials.client_email,
-    key: options.credentials.private_key,
-    scopes: SCOPES,
-    // 委任先。これを指定しないとサービスアカウント自身のメールボックスを見にいく
-    subject: options.userEmail,
-  });
-
-  return google.gmail({ version: "v1", auth });
-}
 
 /** Gmail からメールを取得する。 */
 export class GmailMailSource implements MailSource {
   readonly name = "gmail";
 
   private readonly gmail: gmail_v1.Gmail;
-  private readonly logger: Logger;
 
   constructor(
-    options: GmailOptions,
+    auth: GoogleAuthClient,
     /** 取得条件。Gmailの検索構文をそのまま使う（例: is:unread -category:promotions） */
     private readonly query: string,
+    private readonly logger: Logger,
   ) {
-    this.gmail = createGmailClient(options);
-    this.logger = options.logger;
+    this.gmail = google.gmail({ version: "v1", auth });
   }
 
   async fetch(limit: number): Promise<EmailMessage[]> {
     const list = await this.gmail.users.messages.list({
-      userId: "me",
+      userId: GMAIL_USER_ID,
       q: this.query,
       maxResults: limit,
     });
@@ -62,12 +37,13 @@ export class GmailMailSource implements MailSource {
       .map((m) => m.id)
       .filter((id): id is string => typeof id === "string");
 
+    // 検索条件はメール本文と違い自分で書いたものなのでログに出してよい
     this.logger.debug("gmail.listed", { query: this.query, count: ids.length });
 
     const messages: EmailMessage[] = [];
     for (const id of ids) {
       const detail = await this.gmail.users.messages.get({
-        userId: "me",
+        userId: GMAIL_USER_ID,
         id,
         format: "full",
       });
@@ -83,18 +59,19 @@ export class GmailDraftWriter implements DraftWriter {
   readonly name = "gmail";
 
   private readonly gmail: gmail_v1.Gmail;
-  private readonly logger: Logger;
 
-  constructor(options: GmailOptions) {
-    this.gmail = createGmailClient(options);
-    this.logger = options.logger;
+  constructor(
+    auth: GoogleAuthClient,
+    private readonly logger: Logger,
+  ) {
+    this.gmail = google.gmail({ version: "v1", auth });
   }
 
   async createDraft(result: TriageResult): Promise<void> {
     const raw = buildRawMessage(result);
 
     const response = await this.gmail.users.drafts.create({
-      userId: "me",
+      userId: GMAIL_USER_ID,
       requestBody: {
         message: {
           raw,
@@ -103,6 +80,7 @@ export class GmailDraftWriter implements DraftWriter {
       },
     });
 
+    // 宛先は個人情報なのでログに出さない（公開リポジトリの実行ログは誰でも読める）
     this.logger.info("gmail.draft_created", {
       messageId: result.message.id,
       draftId: response.data.id,
@@ -175,7 +153,6 @@ export function buildRawMessage(result: TriageResult): string {
 
 function encodeHeader(value: string): string {
   // ASCIIのみならそのまま。日本語が含まれる場合だけエンコードする
-  // eslint-disable-next-line no-control-regex
   if (/^[\x00-\x7F]*$/.test(value)) return value;
   return `=?UTF-8?B?${Buffer.from(value, "utf-8").toString("base64")}?=`;
 }
