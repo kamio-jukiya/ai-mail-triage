@@ -175,7 +175,7 @@ describe("パイプライン全体での挙動", () => {
         store: new MemoryProcessedStore(),
         logger,
       },
-      { maxMessages: 20, confidenceThreshold: 0.6, dryRun: false },
+      { maxMessages: 20, confidenceThreshold: 0.6, dryRun: false, logContent: false },
     );
 
     assert.equal(summary.injectionSuspected, 1);

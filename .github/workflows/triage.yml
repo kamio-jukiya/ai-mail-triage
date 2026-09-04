@@ -1,5 +1,8 @@
 # 定期実行。平日の9時・13時・17時（JST）に受信メールを振り分ける。
 #
+# シークレットを使うのはこのワークフローだけで、pull_request では動かさない。
+# フォークからのPRでシークレットが読み出される経路を作らないため。
+#
 # 処理済みIDは artifact として実行間で引き継ぐ。
 # 本来は外部ストレージ（S3 / DynamoDB など）に置くべきだが、
 # この規模なら artifact で十分で、追加の課金対象を増やさずに済む。
@@ -15,6 +18,10 @@ on:
         description: "書き込みを行わず分類結果だけ確認する"
         type: boolean
         default: false
+
+# リポジトリへの書き込みは行わない。artifact の読み書きはこの権限とは別枠
+permissions:
+  contents: read
 
 # 実行が重ならないようにする。重なると同じメールを二重に処理しかける
 # （冪等性の仕組みで防いではいるが、そもそも重ねない）
@@ -32,9 +39,10 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v5
+      # SHA固定の理由は ci.yml のコメントを参照
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: "22.x"
           cache: npm
@@ -43,7 +51,7 @@ jobs:
         run: npm ci
 
       - name: 前回までの処理済みIDを取得
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         continue-on-error: true # 初回実行では存在しないので失敗して良い
         with:
           name: triage-state
@@ -52,8 +60,14 @@ jobs:
       - name: 実行
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Google Workspace（サービスアカウント方式）を使う場合
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           GMAIL_USER: ${{ vars.GMAIL_USER }}
+          # 個人のGmail（OAuth方式）を使う場合
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+          GOOGLE_AUTH_MODE: ${{ vars.GOOGLE_AUTH_MODE }}
           GMAIL_QUERY: ${{ vars.GMAIL_QUERY }}
           SHEETS_SPREADSHEET_ID: ${{ vars.SHEETS_SPREADSHEET_ID }}
           SHEETS_RANGE: ${{ vars.SHEETS_RANGE }}
@@ -61,6 +75,9 @@ jobs:
           TRIAGE_MODEL: ${{ vars.TRIAGE_MODEL }}
           TRIAGE_MAX_MESSAGES: ${{ vars.TRIAGE_MAX_MESSAGES }}
           TRIAGE_CONFIDENCE_THRESHOLD: ${{ vars.TRIAGE_CONFIDENCE_THRESHOLD }}
+          # 実行ログに件名・差出人を出さない。
+          # 公開リポジトリの Actions 実行ログは誰でも読めるため、既定のまま（false）にしておく
+          TRIAGE_LOG_CONTENT: "false"
         run: |
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             npm run dry-run
@@ -70,7 +87,7 @@ jobs:
 
       - name: 処理済みIDを保存
         if: always() # 途中で失敗しても、そこまでの処理済みIDは残す
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: triage-state
           path: state/

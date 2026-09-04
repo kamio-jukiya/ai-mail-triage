@@ -80,12 +80,14 @@ async function main(): Promise<void> {
   });
 
   const config = loadConfig({ mode: args.mode, dryRun: args.dryRun });
-  const deps = args.mode === "demo" ? buildDemoDeps(logger) : buildLiveDeps(config, logger);
+  const deps =
+    args.mode === "demo" ? buildDemoDeps(logger, config) : buildLiveDeps(config, logger);
 
   const summary = await runPipeline(deps, {
     maxMessages: config.maxMessages,
     confidenceThreshold: config.confidenceThreshold,
     dryRun: config.dryRun,
+    logContent: config.logContent,
     retry: {
       attempts: 3,
       baseDelayMs: 1_000,
@@ -101,7 +103,7 @@ async function main(): Promise<void> {
 }
 
 /** デモ用の依存。外部通信は一切しない。 */
-function buildDemoDeps(logger: Logger): PipelineDeps {
+function buildDemoDeps(logger: Logger, config: Config): PipelineDeps {
   // ESM では __dirname が使えないので import.meta.url から解決する。
   // dist/ から実行されるため、fixtures はひとつ上の階層にある
   const here = path.dirname(fileURLToPath(import.meta.url));
@@ -110,9 +112,9 @@ function buildDemoDeps(logger: Logger): PipelineDeps {
   return {
     source: new FixtureMailSource(fixturePath),
     classifier: new StubClassifier(),
-    sink: new ConsoleRecordSink(logger),
-    notifier: new ConsoleNotifier(logger),
-    draftWriter: new ConsoleDraftWriter(logger),
+    sink: new ConsoleRecordSink(logger, config.logContent),
+    notifier: new ConsoleNotifier(logger, config.logContent),
+    draftWriter: new ConsoleDraftWriter(logger, config.logContent),
     // デモでは毎回まっさらな状態から動かす（冪等性の確認は test で行う）
     store: new MemoryProcessedStore(),
     logger,
@@ -153,7 +155,7 @@ function buildLiveDeps(config: Config, logger: Logger): PipelineDeps {
     }),
     notifier: config.slackWebhookUrl
       ? new SlackNotifier(config.slackWebhookUrl, logger)
-      : new ConsoleNotifier(logger),
+      : new ConsoleNotifier(logger, config.logContent),
     draftWriter: new GmailDraftWriter(auth, logger),
     store: new FileProcessedStore(config.statePath),
     logger,
@@ -164,6 +166,16 @@ function throwMissing(names: string): never {
   throw new ConfigError(
     `本番実行には ${names} の設定が必要です。設定せずに動作を確認したい場合は --demo を付けてください。`,
   );
+}
+
+/**
+ * 保留になった理由を、メールの内容を含まない固定の文言で返す。
+ * 分類器が生成した reason と違い、本文を引用する余地がない。
+ */
+function holdReasonLabel(result: PipelineSummary["results"][number]): string {
+  if (result.injectionSuspected) return "本文に分類器への指示とみられる記述があるため";
+  if (result.heldForReview) return "確信度が閾値未満のため（元判定: " + result.originalCategory + "）";
+  return "分類器が判断できなかったため";
 }
 
 /** 人間向けのサマリを標準エラーに出す。標準出力はJSONログ専用に保つ。 */
@@ -202,9 +214,24 @@ export function printSummary(summary: PipelineSummary, config: Config): void {
     lines.push("  保留になったメール (人の確認が必要):");
     for (const result of summary.results) {
       if (result.classification.category !== "unclassified") continue;
-      lines.push(`    - ${result.message.subject} (${result.message.from})`);
-      lines.push(`      理由: ${result.classification.reason}`);
+      // 件名と差出人はメールの内容。GitHub Actions の実行ログに残るため既定では伏せる
+      lines.push(
+        config.logContent
+          ? `    - ${result.message.subject} (${result.message.from})`
+          : `    - メッセージID ${result.message.id}`,
+      );
+      // reason は分類器が生成した文章で、メール本文の一部を引用しうる。
+      // 内容の出力を許可していない場合は、こちら側で決めた保留の理由だけを出す
+      lines.push(
+        `      理由: ${config.logContent ? result.classification.reason : holdReasonLabel(result)}`,
+      );
     }
+  }
+
+  if (!config.logContent) {
+    lines.push("");
+    lines.push("  ※ 件名・差出人は伏せています。GmailでメッセージIDから該当メールを開いてください。");
+    lines.push("　　（手元で内容も表示するには TRIAGE_LOG_CONTENT=true）");
   }
 
   if (summary.failures.length > 0) {
@@ -212,7 +239,8 @@ export function printSummary(summary: PipelineSummary, config: Config): void {
     lines.push("  失敗したメール (次回の実行で再処理されます):");
     for (const failure of summary.failures) {
       const message = failure.error instanceof Error ? failure.error.message : String(failure.error);
-      lines.push(`    - ${failure.subject}: ${message}`);
+      const label = config.logContent ? failure.subject : `メッセージID ${failure.messageId}`;
+      lines.push(`    - ${label}: ${message}`);
     }
   }
 

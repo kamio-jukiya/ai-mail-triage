@@ -64,13 +64,24 @@ export class InMemoryMailSource implements MailSource {
   }
 }
 
+/**
+ * 記録先・通知先・下書き作成先のコンソール実装。
+ *
+ * 第2引数の logContent は「メールの内容をログに出してよいか」。
+ * デモは fixtures の作り話なので true、本番のフォールバックでは false で使う。
+ * 公開リポジトリの GitHub Actions 実行ログは誰でも読めるため、既定は false。
+ */
+
 /** 記録先。実際には書き込まず、ログに残して保持する。 */
 export class ConsoleRecordSink implements RecordSink {
   readonly name = "console";
 
   readonly recorded: TriageResult[] = [];
 
-  constructor(private readonly logger: Logger) {}
+  constructor(
+    private readonly logger: Logger,
+    private readonly logContent = false,
+  ) {}
 
   async record(result: TriageResult): Promise<void> {
     this.recorded.push(result);
@@ -79,7 +90,7 @@ export class ConsoleRecordSink implements RecordSink {
       messageId: result.message.id,
       category: result.classification.category,
       categoryLabel: CATEGORY_LABELS[result.classification.category],
-      summary: result.classification.summary,
+      ...(this.logContent ? { summary: result.classification.summary } : {}),
     });
   }
 }
@@ -90,7 +101,10 @@ export class ConsoleNotifier implements Notifier {
 
   readonly notified: TriageResult[] = [];
 
-  constructor(private readonly logger: Logger) {}
+  constructor(
+    private readonly logger: Logger,
+    private readonly logContent = false,
+  ) {}
 
   async notify(result: TriageResult): Promise<void> {
     this.notified.push(result);
@@ -99,7 +113,7 @@ export class ConsoleNotifier implements Notifier {
       messageId: result.message.id,
       category: result.classification.category,
       heldForReview: result.heldForReview,
-      subject: result.message.subject,
+      ...(this.logContent ? { subject: result.message.subject } : {}),
     });
   }
 }
@@ -110,14 +124,18 @@ export class ConsoleDraftWriter implements DraftWriter {
 
   readonly drafts: TriageResult[] = [];
 
-  constructor(private readonly logger: Logger) {}
+  constructor(
+    private readonly logger: Logger,
+    private readonly logContent = false,
+  ) {}
 
   async createDraft(result: TriageResult): Promise<void> {
     this.drafts.push(result);
     this.logger.info("draft.created", {
       writer: this.name,
       messageId: result.message.id,
-      to: result.message.from,
+      // 宛先は個人情報。内容の出力を許可した場合だけ出す
+      ...(this.logContent ? { to: result.message.from } : {}),
       chars: result.classification.replyDraft.length,
     });
   }

@@ -1,6 +1,11 @@
 # 型チェック・テスト・デモ実行。
 # デモまで CI で回すのは「クローンして npm run demo が動く」ことを保証したいから。
 # 手順書に書いた通りに動かない成果物は、動かないのと同じ。
+#
+# このワークフローは pull_request でも動くため、シークレットを一切使わない。
+# フォークからのPRにシークレットを渡さないための最も確実な方法は、
+# 「シークレットを必要とする処理をここに書かない」こと。
+# 実際の振り分け（シークレットが要る処理）は triage.yml に分けてある。
 name: CI
 
 on:
@@ -8,6 +13,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+
+# 既定の権限に頼らず、必要な最小限だけを明示する。
+# このジョブはチェックアウトしか行わないので読み取りのみ
+permissions:
+  contents: read
 
 jobs:
   check:
@@ -18,9 +28,12 @@ jobs:
         node-version: ["20.x", "22.x"]
 
     steps:
-      - uses: actions/checkout@v5
+      # サードパーティのActionはタグではなくcommit SHAで固定する。
+      # タグは書き換えられるため、v5 のまま中身が別物に差し替わりうる。
+      # 更新時は「タグ -> SHA」を引き直してコメントの版数も直すこと
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm

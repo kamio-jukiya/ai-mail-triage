@@ -33,6 +33,11 @@ export interface PipelineOptions {
   confidenceThreshold: number;
   /** true なら外部への書き込みを一切しない */
   dryRun: boolean;
+  /**
+   * ログにメールの内容（件名など）を含めるか。
+   * 公開リポジトリの GitHub Actions 実行ログは誰でも読めるため、本番では false にする。
+   */
+  logContent: boolean;
   /** 分類APIのリトライ設定 */
   retry?: RetryOptions;
 }
@@ -107,7 +112,7 @@ export async function runPipeline(
       summary.failures.push({ messageId: message.id, subject: message.subject, error });
       logger.error("message.failed", {
         messageId: message.id,
-        subject: message.subject,
+        ...(options.logContent ? { subject: message.subject } : {}),
         error,
       });
     }
@@ -153,7 +158,8 @@ async function handleMessage(
 
   logger.info("message.classified", {
     messageId: message.id,
-    subject: message.subject,
+    // 件名は内容そのもの。既定では出さない（logContent の既定は false）
+    ...(options.logContent ? { subject: message.subject } : {}),
     category: result.classification.category,
     categoryLabel: CATEGORY_LABELS[result.classification.category],
     confidence: result.classification.confidence,

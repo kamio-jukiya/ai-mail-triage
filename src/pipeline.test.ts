@@ -67,7 +67,7 @@ function buildDeps(overrides: Partial<PipelineDeps> = {}): PipelineDeps & {
   };
 }
 
-const options = { maxMessages: 20, confidenceThreshold: 0.6, dryRun: false };
+const options = { maxMessages: 20, confidenceThreshold: 0.6, dryRun: false, logContent: false };
 
 describe("runPipeline", () => {
   it("全件を分類し、要対応だけ通知する", async () => {
