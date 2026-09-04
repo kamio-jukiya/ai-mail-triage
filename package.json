@@ -1,0 +1,27 @@
+{
+  "name": "ai-mail-triage",
+  "version": "1.0.0",
+  "description": "受信メールを生成AIで分類し、記録・通知・返信下書きまでを自動化する仕組み",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "demo": "npm run build && node dist/index.js --demo",
+    "start": "npm run build && node dist/index.js",
+    "dry-run": "npm run build && node dist/index.js --dry-run",
+    "test": "npm run build && node --test dist/*.test.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.123.0",
+    "googleapis": "^160.0.0",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2"
+  },
+  "license": "MIT"
+}

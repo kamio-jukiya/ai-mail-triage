@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+*.log
+state/
+credentials.json
+token.json
+
+# 応募の背景や個人的な事情を含む実装仕様。手元には残すが公開しない
+SPEC.md

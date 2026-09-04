@@ -1,0 +1,74 @@
+# 定期実行。平日の9時・13時・17時（JST）に受信メールを振り分ける。
+#
+# 処理済みIDは artifact として実行間で引き継ぐ。
+# 本来は外部ストレージ（S3 / DynamoDB など）に置くべきだが、
+# この規模なら artifact で十分で、追加の課金対象を増やさずに済む。
+name: メール振り分け
+
+on:
+  schedule:
+    # UTC 表記。JST の 9:00 / 13:00 / 17:00 に相当する
+    - cron: "0 0,4,8 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "書き込みを行わず分類結果だけ確認する"
+        type: boolean
+        default: false
+
+# 実行が重ならないようにする。重なると同じメールを二重に処理しかける
+# （冪等性の仕組みで防いではいるが、そもそも重ねない）
+concurrency:
+  group: triage
+  cancel-in-progress: false
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.x"
+          cache: npm
+
+      - name: 依存関係のインストール
+        run: npm ci
+
+      - name: 前回までの処理済みIDを取得
+        uses: actions/download-artifact@v4
+        continue-on-error: true # 初回実行では存在しないので失敗して良い
+        with:
+          name: triage-state
+          path: state
+
+      - name: 実行
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GMAIL_USER: ${{ vars.GMAIL_USER }}
+          GMAIL_QUERY: ${{ vars.GMAIL_QUERY }}
+          SHEETS_SPREADSHEET_ID: ${{ vars.SHEETS_SPREADSHEET_ID }}
+          SHEETS_RANGE: ${{ vars.SHEETS_RANGE }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          TRIAGE_MODEL: ${{ vars.TRIAGE_MODEL }}
+          TRIAGE_MAX_MESSAGES: ${{ vars.TRIAGE_MAX_MESSAGES }}
+          TRIAGE_CONFIDENCE_THRESHOLD: ${{ vars.TRIAGE_CONFIDENCE_THRESHOLD }}
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            npm run dry-run
+          else
+            npm start
+          fi
+
+      - name: 処理済みIDを保存
+        if: always() # 途中で失敗しても、そこまでの処理済みIDは残す
+        uses: actions/upload-artifact@v4
+        with:
+          name: triage-state
+          path: state/
+          retention-days: 90
+          overwrite: true

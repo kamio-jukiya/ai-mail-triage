@@ -1,0 +1,38 @@
+# 型チェック・テスト・デモ実行。
+# デモまで CI で回すのは「クローンして npm run demo が動く」ことを保証したいから。
+# 手順書に書いた通りに動かない成果物は、動かないのと同じ。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: ["20.x", "22.x"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: 依存関係のインストール
+        run: npm ci
+
+      - name: 型チェック
+        run: npm run typecheck
+
+      - name: テスト
+        run: npm test
+
+      - name: デモの実行（APIキー・ネットワーク不要）
+        run: npm run demo
