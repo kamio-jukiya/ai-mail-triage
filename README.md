@@ -1,5 +1,7 @@
 # ai-mail-triage
 
+[![CI](https://github.com/kamio-jukiya/ai-mail-triage/actions/workflows/ci.yml/badge.svg)](https://github.com/kamio-jukiya/ai-mail-triage/actions/workflows/ci.yml)
+
 受信メールを生成AI（Claude API）で6分類し、**記録・通知・返信下書き作成**までを一本の流れで処理するツールです。
 
 問い合わせ窓口のメールを人が1通ずつ振り分けている状態を、機械が下処理して人は判断だけに集中する状態に変えることを目的にしています。
@@ -76,6 +78,8 @@ flowchart LR
 ```
 
 定期実行は **GitHub Actions**（平日 9:00 / 13:00 / 17:00 JST）。サーバを持たずに動かせて、実行履歴がそのまま監査ログになります。
+
+定期実行は `TRIAGE_ENABLED` 変数が `true` のときだけ走ります。設定が済むまで空振りさせないための入り切りスイッチで、このリポジトリでは未設定のため動きません（CIとデモは動きます）。
 
 ### 分類カテゴリ
 

@@ -191,6 +191,10 @@ https://docs.google.com/spreadsheets/d/【ここがスプレッドシートID】
 
 設定は以上です。
 
+> **`TRIAGE_ENABLED` はまだ登録しないでください。**
+> これは自動実行の入り切りスイッチです。次の「4. 動作確認」がすべて終わってから登録します。
+> 登録するまで、定期実行は動きません（手動実行だけができる状態です）。
+
 ---
 
 ## 4. 動作確認
@@ -252,7 +256,15 @@ GitHubの「Actions」タブを開き、左メニューから **CI** を選ん�
 
 ## 5. 本番稼働の開始
 
-手順4まで確認できたら、自動実行が有効になります。特別な操作は不要で、平日の 9時・13時・17時 に自動で動きます。
+手順4まで確認できたら、自動実行を有効にします。
+
+「Settings」→「Secrets and variables」→「Actions」→「Variables」タブで、次を登録してください。
+
+| 名前 | 値 |
+|---|---|
+| `TRIAGE_ENABLED` | `true` |
+
+これで平日の 9時・13時・17時 に自動で動きます。**止めたくなったら、この値を `false` に変えるだけです**（削除でも構いません）。
 
 ただし、**いきなり従来の目視確認をやめないでください。** 次の順で移行することを推奨します。
 
@@ -349,7 +361,7 @@ GitHubの「Actions」タブを開き、左メニューから **CI** を選ん�
 
 ### いったん止めたい
 
-「Actions」タブ → 左メニュー「メール振り分け」→ 右上のメニュー →「Disable workflow」で自動実行が止まります。再開は同じ場所から「Enable workflow」です。
+「Settings」→「Secrets and variables」→「Actions」→「Variables」で `TRIAGE_ENABLED` を `false` に変更してください。次回以降の自動実行が止まります。再開は `true` に戻すだけです。
 
 ---
 
@@ -367,6 +379,7 @@ GitHubの「Actions」タブを開き、左メニューから **CI** を選ん�
 | `TRIAGE_MODEL` | Variable | – | `claude-opus-5` | 分類に使うモデル |
 | `TRIAGE_MAX_MESSAGES` | Variable | – | `20` | 1回の処理上限件数 |
 | `TRIAGE_CONFIDENCE_THRESHOLD` | Variable | – | `0.6` | この値未満の確信度は保留に倒す（0.0〜1.0） |
+| `TRIAGE_ENABLED` | Variable | – | 未設定 | `true` のときだけ定期実行が動く。稼働の入り切りスイッチ |
 
 ### 確信度の閾値について
 

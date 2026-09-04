@@ -24,6 +24,10 @@ concurrency:
 
 jobs:
   triage:
+    # 稼働スイッチ。Variables に TRIAGE_ENABLED=true を登録するまで実行されない。
+    # 設定が済んでいない状態で定期実行が空振りし続けるのを防ぐと同時に、
+    # 「止めたいときに1箇所を変えれば止まる」場所を用意しておく意味もある。
+    if: vars.TRIAGE_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
