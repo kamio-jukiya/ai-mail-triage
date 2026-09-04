@@ -40,9 +40,11 @@ export class SlackNotifier implements Notifier {
 /** 通知本文。Slackで見たときに1画面で判断できる情報量に絞る。 */
 export function buildMessageText(result: TriageResult): string {
   const label = CATEGORY_LABELS[result.classification.category];
-  const head = result.heldForReview
-    ? `:warning: 【保留】確信度不足のため人の確認が必要です（元判定: ${result.originalCategory ?? "不明"}）`
-    : `:mailbox_with_mail: 【${label}】要対応のメールが届いています`;
+  const head = result.injectionSuspected
+    ? ":rotating_light: 【保留】本文に分類器への指示とみられる記述があります。**下書きは作成していません**"
+    : result.heldForReview
+      ? `:warning: 【保留】確信度不足のため人の確認が必要です（元判定: ${result.originalCategory ?? "不明"}）`
+      : `:mailbox_with_mail: 【${label}】要対応のメールが届いています`;
 
   return [
     head,

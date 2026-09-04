@@ -89,6 +89,8 @@ export class ClaudeClassifier implements Classifier {
       return heldForReview(message, "分類結果を構造化出力として解析できなかったため保留にしました");
     }
 
+    // 下書きのURL除去と指示文の検出は core/classify.ts の buildTriageResult で行う。
+    // 分類器の実装によらず必ず通る場所に置きたいため、ここではモデルの出力をそのまま返す
     return response.parsed_output;
   }
 }

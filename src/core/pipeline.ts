@@ -48,6 +48,8 @@ export interface PipelineSummary {
   skippedAsProcessed: number;
   processed: number;
   heldForReview: number;
+  /** 分類器への指示らしき記述が見つかり、分類結果を採用しなかった件数 */
+  injectionSuspected: number;
   notified: number;
   draftsCreated: number;
   failed: number;
@@ -69,6 +71,7 @@ export async function runPipeline(
     skippedAsProcessed: 0,
     processed: 0,
     heldForReview: 0,
+    injectionSuspected: 0,
     notified: 0,
     draftsCreated: 0,
     failed: 0,
@@ -115,6 +118,7 @@ export async function runPipeline(
     processed: summary.processed,
     skippedAsProcessed: summary.skippedAsProcessed,
     heldForReview: summary.heldForReview,
+    injectionSuspected: summary.injectionSuspected,
     notified: summary.notified,
     draftsCreated: summary.draftsCreated,
     failed: summary.failed,
@@ -156,11 +160,13 @@ async function handleMessage(
     heldForReview: result.heldForReview,
     originalCategory: result.originalCategory,
     actionRequired: result.actionRequired,
+    injectionSuspected: result.injectionSuspected,
   });
 
   summary.results.push(result);
   summary.processed++;
   if (result.heldForReview) summary.heldForReview++;
+  if (result.injectionSuspected) summary.injectionSuspected++;
   const category = result.classification.category;
   summary.byCategory[category] = (summary.byCategory[category] ?? 0) + 1;
 

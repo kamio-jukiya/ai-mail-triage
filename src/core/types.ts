@@ -79,6 +79,8 @@ export interface TriageResult {
   originalCategory?: Category;
   /** 要対応か（＝通知対象か） */
   actionRequired: boolean;
+  /** 分類器への指示らしき記述が本文にあったか。true なら分類結果を採用していない */
+  injectionSuspected: boolean;
 }
 
 /** 分類器。StubClassifier（デモ用）と ClaudeClassifier（本番）を差し替える。 */

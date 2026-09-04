@@ -183,6 +183,9 @@ export function printSummary(summary: PipelineSummary, config: Config): void {
   lines.push(
     `  保留        : ${held} 件 (うち確信度 ${config.confidenceThreshold} 未満による差し戻し ${summary.heldForReview} 件)`,
   );
+  if (summary.injectionSuspected > 0) {
+    lines.push(`  うち指示混入: ${summary.injectionSuspected} 件 (分類結果を採用せず保留)`);
+  }
   lines.push(`  通知        : ${summary.notified} 件`);
   lines.push(`  下書き作成  : ${summary.draftsCreated} 件`);
   lines.push(`  失敗        : ${summary.failed} 件`);
